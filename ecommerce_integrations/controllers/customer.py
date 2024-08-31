@@ -55,6 +55,12 @@ class EcommerceCustomer:
 
 		customer_doc = self.get_customer_doc()
 
+		if getattr(self, "existing_states", None) is None:
+			self.existing_states = self.get_all_existing_states()
+
+		if address.get("state") and address.get("state") not in self.existing_states:
+			self.create_state(address.get("state"))
+
 		frappe.get_doc(
 			{
 				"doctype": "Address",
@@ -75,3 +81,23 @@ class EcommerceCustomer:
 				"links": [{"link_doctype": "Customer", "link_name": customer_doc.name}],
 			}
 		).insert(ignore_mandatory=True)
+
+	def get_all_existing_states(self):
+		return {
+			id for id in frappe.db.sql_list(
+				"""
+				SELECT name FROM `tabState`
+				"""
+			)
+		}
+
+	def create_state(self, state):
+		doc = frappe.new_doc("State")
+
+		doc.state = state
+		doc.insert()
+
+		# Add to existing states to avoid duplicate inserts
+		self.existing_states.add(doc.name)
+
+	existing_states: set

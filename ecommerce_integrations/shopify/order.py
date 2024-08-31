@@ -270,6 +270,9 @@ def get_tax_account_head(tax, charge_type: Optional[Literal["shipping", "sales_t
 		tax_account = frappe.db.get_single_value(SETTING_DOCTYPE, DEFAULT_TAX_FIELDS[charge_type])
 
 	if not tax_account:
+		tax_account = "2310 - State Taxes WA - SV"
+
+	if not tax_account:
 		frappe.throw(_("Tax Account not specified for Shopify Tax {0}").format(tax.get("title")))
 
 	return tax_account

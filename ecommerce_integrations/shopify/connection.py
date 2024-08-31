@@ -5,18 +5,16 @@ import hmac
 import json
 from typing import List
 
-import frappe
-from frappe import _
 from shopify.resources import Webhook
 from shopify.session import Session
 
-from ecommerce_integrations.shopify.constants import (
-	API_VERSION,
-	EVENT_MAPPER,
-	SETTING_DOCTYPE,
-	WEBHOOK_EVENTS,
-)
+import frappe
+from ecommerce_integrations.shopify.constants import (API_VERSION,
+                                                      EVENT_MAPPER,
+                                                      SETTING_DOCTYPE,
+                                                      WEBHOOK_EVENTS)
 from ecommerce_integrations.shopify.utils import create_shopify_log
+from frappe import _
 
 
 def temp_shopify_session(func):
@@ -94,15 +92,54 @@ def get_callback_url() -> str:
 
 @frappe.whitelist(allow_guest=True)
 def store_request_data() -> None:
+	try:
+		_store_request_data()
+	except Exception as e:
+		frappe.log_error()
+		return False
+	else:
+		return True
+
+def _store_request_data() -> None:
 	if frappe.request:
 		hmac_header = frappe.get_request_header("X-Shopify-Hmac-Sha256")
 
-		_validate_request(frappe.request, hmac_header)
+		data = frappe.request.data
+		if isinstance(data, bytes):
+			data = data.decode("utf-8")
+
+		try:
+			_validate_request(data, hmac_header)
+		except frappe.ValidationError:
+			frappe.log_error()
+			frappe.log_error(
+				"Invalid Request",
+				{
+					"data": data,
+					"headers": frappe.request.headers,
+				},
+			)
+			return
 
 		data = json.loads(frappe.request.data)
 		event = frappe.request.headers.get("X-Shopify-Topic")
 
+
+
 		process_request(data, event)
+
+	req = frappe.request
+	if req:
+		headers = req.headers
+		data = req.data
+
+		frappe.log_error(
+			"headers", frappe.as_json(headers)
+		)
+
+		frappe.log_error(
+			"body", data
+		)
 
 
 def process_request(data, event):
@@ -120,12 +157,28 @@ def process_request(data, event):
 	)
 
 
-def _validate_request(req, hmac_header):
+def _validate_request(data, hmac_header):
 	settings = frappe.get_doc(SETTING_DOCTYPE)
 	secret_key = settings.shared_secret
 
-	sig = base64.b64encode(hmac.new(secret_key.encode("utf8"), req.data, hashlib.sha256).digest())
+	sig = base64.b64encode(
+		hmac.new(
+			secret_key.encode("utf-8"), data.encode("utf-8"), hashlib.sha256
+		).digest()
+	)
 
-	if sig != bytes(hmac_header.encode()):
-		create_shopify_log(status="Error", request_data=req.data)
-		frappe.throw(_("Unverified Webhook Data"))
+	if not hmac_header:
+		create_shopify_log(status="Error", request_data=data)
+
+		frappe.throw(
+			_("Missing HMAC Header")
+		)
+
+	if not hmac_header or sig != bytes(
+		hmac_header.encode("utf-8")
+	):
+		create_shopify_log(status="Error", request_data=data)
+
+		frappe.throw(
+			_("Unverified Webhook Data")
+		)
