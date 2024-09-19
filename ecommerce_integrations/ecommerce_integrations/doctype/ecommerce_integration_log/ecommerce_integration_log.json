@@ -70,7 +70,7 @@
  ],
  "in_create": 1,
  "links": [],
- "modified": "2021-05-28 16:06:49.008875",
+ "modified": "2024-09-17 03:54:32.178933",
  "modified_by": "Administrator",
  "module": "Ecommerce Integrations",
  "name": "Ecommerce Integration Log",
@@ -103,5 +103,7 @@
  ],
  "sort_field": "modified",
  "sort_order": "DESC",
- "title_field": "title"
+ "states": [],
+ "title_field": "title",
+ "track_seen": 1
 }
