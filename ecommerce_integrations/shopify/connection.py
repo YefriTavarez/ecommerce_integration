@@ -100,7 +100,34 @@ def store_request_data() -> None:
 	else:
 		return True
 
+def anotify_discord():
+	frappe.enqueue(
+		method=notify_discord,
+		queue="short",
+		timeout=300,
+	)
+
+def notify_discord():
+	import requests
+
+	url = "https://discord.com/api/webhooks/1285344151596175496/uhF_XjETxBSlk7POHv61tckCcS9_kwpJeGOSxY9gYOf2q-JyDtueMsF3qjJjcZfNGdBO"
+
+	payload = frappe.as_json({
+		'content': 'We have a new order',
+		'username': 'Order Supervisor',
+	})
+
+	headers = {
+		'Content-Type': 'application/json'
+	}
+
+	response = requests.post(url, headers=headers, data=payload)
+
+	print(response.text)
+
+
 def _store_request_data() -> None:
+	anotify_discord()
 	if frappe.request:
 		hmac_header = frappe.get_request_header("X-Shopify-Hmac-Sha256")
 
