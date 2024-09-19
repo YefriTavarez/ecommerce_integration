@@ -313,14 +313,21 @@ def get_item_code(shopify_item):
 
 	Item should contain both product_id and variant_id."""
 
+	if sku := shopify_item.get("sku"):
+		item_code = frappe.get_value("Item", {"item_code": sku}, "item_code")
+
+		if item_code:
+			return item_code
+
 	item = ecommerce_item.get_erpnext_item(
 		integration=MODULE_NAME,
-		integration_item_code=shopify_item.get("product_id"),
+		integration_item_code=shopify_item.get("sku"),
 		variant_id=shopify_item.get("variant_id"),
 		sku=shopify_item.get("sku"),
 	)
 	if item:
 		return item.item_code
+
 
 
 @temp_shopify_session
