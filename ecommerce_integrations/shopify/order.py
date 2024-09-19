@@ -34,7 +34,7 @@ def sync_sales_order(payload, request_id=None):
 	frappe.set_user("Administrator")
 	frappe.flags.request_id = request_id
 
-	if frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: cstr(order["id"])}):
+	if frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: cstr(order["id"]), "docstatus": ["!=", 2]}):
 		create_shopify_log(status="Invalid", message="Sales order already exists, not synced")
 		return
 	try:
@@ -151,10 +151,16 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive):
 
 		if all_product_exists:
 			item_code = get_item_code(shopify_item)
+
+			erpnext_item = frappe.get_doc("Item", item_code)
+			item_name = erpnext_item.item_name
+			description = erpnext_item.description
+
 			items.append(
 				{
 					"item_code": item_code,
-					"item_name": shopify_item.get("name"),
+					"item_name": item_name or item_code,  
+					"description": description,
 					"rate": _get_item_price(shopify_item, taxes_inclusive),
 					"delivery_date": delivery_date,
 					"qty": shopify_item.get("quantity"),
@@ -201,10 +207,13 @@ def get_order_taxes(shopify_order, setting, items):
 	for line_item in line_items:
 		item_code = get_item_code(line_item)
 		for tax in line_item.get("tax_lines"):
+			if not flt(tax.get("rate")):
+				continue
+
 			taxes.append(
 				{
 					"charge_type": "Actual",
-					"account_head": get_tax_account_head(tax, charge_type="sales_tax"),
+					"account_head": get_tax_account_head(tax, charge_type="sales_tax", shopify_order=shopify_order),
 					"description": (
 						get_tax_account_description(tax) or f"{tax.get('title')} - {tax.get('rate') * 100.0:.2f}%"
 					),
@@ -259,8 +268,39 @@ def consolidate_order_taxes(taxes):
 	return tax_account_wise_data.values()
 
 
-def get_tax_account_head(tax, charge_type: Optional[Literal["shipping", "sales_tax"]] = None):
+def get_tax_account_head(
+	tax,
+	charge_type: Optional[Literal["shipping", "sales_tax"]] = None,
+	shopify_order=None,
+):
 	tax_title = str(tax.get("title"))
+
+	if charge_type == "sales_tax":
+		if shopify_order:
+			# the tax_account must be based on the state of the shipping address
+			shipping_address = shopify_order.get("shipping_address")
+			if shipping_address:
+				# if state is Whashington, then we need to use the tax account for WA
+				# if the state is Florida, then we need to use the tax account for FL
+				# else use the other tax account
+
+				if state := shipping_address.get("province_code"):
+					if state == "WA":
+						if "Washington State Tax" == tax.get("title"):
+							return "2310 - State Taxes WA - SV"
+						else:
+							return "2320 - Local Taxes WA - SV"
+					elif state == "FL":
+						if "Florida State Tax" == tax.get("title"):
+							return "2330 - State Taxes FL - SV"
+						else:
+							return "2340 - Local Taxes FL - SV"
+					else:
+						return "2350 - Other States - SV"
+				else:
+					return "2350 - Other States - SV"
+		else:
+			return "2350 - Other States - SV"
 
 	tax_account = frappe.db.get_value(
 		"Shopify Tax Account", {"parent": SETTING_DOCTYPE, "shopify_tax": tax_title}, "tax_account",
