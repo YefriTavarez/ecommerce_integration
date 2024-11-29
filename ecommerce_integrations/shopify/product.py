@@ -65,7 +65,7 @@ class ShopifyProduct:
 		if _has_variants(product_dict):
 			self.has_variants = 1
 			attributes = self._create_attribute(product_dict)
-			self._create_item(product_dict, warehouse, 1, attributes)
+			self._create_item(product_dict, warehouse, 0, attributes)
 			self._create_item_variants(product_dict, warehouse, attributes)
 
 		else:
@@ -91,7 +91,9 @@ class ShopifyProduct:
 				# check for attribute values
 				item_attr = frappe.get_doc("Item Attribute", attr.get("name"))
 				if not item_attr.numeric_values:
-					self._set_new_attribute_values(item_attr, attr.get("values"))
+					# trucate values
+					truncated_values = [value[:140] for value in attr.get("values")]
+					self._set_new_attribute_values(item_attr, truncated_values)
 					item_attr.save()
 					attribute.append({"attribute": attr.get("name")})
 
@@ -117,17 +119,18 @@ class ShopifyProduct:
 				item_attr.append("item_attribute_values", {"attribute_value": attr_value, "abbr": attr_value})
 
 	def _create_item(self, product_dict, warehouse, has_variant=0, attributes=None, variant_of=None):
+		sku = product_dict.get("sku") or _get_sku(product_dict)
 		item_dict = {
 			"variant_of": variant_of,
 			"is_stock_item": 1,
-			"item_code": cstr(product_dict.get("item_code")) or cstr(product_dict.get("id")),
+			"item_code": sku or cstr(product_dict.get("item_code")) or cstr(product_dict.get("id")),
 			"item_name": product_dict.get("title", "").strip(),
 			"description": product_dict.get("body_html") or product_dict.get("title"),
 			"item_group": self._get_item_group(product_dict.get("product_type")),
 			"has_variants": has_variant,
 			"attributes": attributes or [],
 			"stock_uom": product_dict.get("uom") or _("Nos"),
-			"sku": product_dict.get("sku") or _get_sku(product_dict),
+			"sku": sku,
 			"default_warehouse": warehouse,
 			"image": _get_item_image(product_dict),
 			"weight_uom": WEIGHT_TO_ERPNEXT_UOM_MAP[product_dict.get("weight_unit")],
@@ -162,7 +165,7 @@ class ShopifyProduct:
 				shopify_item_variant = {
 					"id": product_dict.get("id"),
 					"variant_id": variant.get("id"),
-					"item_code": variant.get("id"),
+					"item_code": variant.get("sku") or variant.get("id") ,
 					"title": product_dict.get("title", "").strip() + "-" + variant.get("title"),
 					"product_type": product_dict.get("product_type"),
 					"sku": variant.get("sku"),
@@ -282,9 +285,9 @@ def _match_sku_and_link_item(
 					"doctype": "Ecommerce Item",
 					"integration": MODULE_NAME,
 					"erpnext_item_code": item_name,
-					"integration_item_code": product_id,
+					"integration_item_code": product_id, # ToDo: double check if this has to be changed
 					"has_variants": 0,
-					"variant_id": cstr(variant_id),
+					"variant_id": cstr(variant_id), # and this as well.
 					"sku": sku,
 				}
 			)
@@ -300,7 +303,7 @@ def create_items_if_not_exist(order):
 	for item in order.get("line_items", []):
 
 		product_id = item["product_id"]
-		variant_id = item.get("variant_id")
+		variant_id = None # item.get("variant_id")
 		sku = item.get("sku")
 		product = ShopifyProduct(product_id, variant_id=variant_id, sku=sku)
 
@@ -554,7 +557,10 @@ def write_upload_log(status: bool, product: Product, item, action="Created") -> 
 		msgprint(msg, title="Note", indicator="orange")
 
 		create_shopify_log(
-			status="Error", request_data=product.to_dict(), message=msg, method="upload_erpnext_item",
+			status="Error",
+			request_data=product.to_dict(),
+			message=msg,
+			method="upload_erpnext_item",
 		)
 	else:
 		create_shopify_log(

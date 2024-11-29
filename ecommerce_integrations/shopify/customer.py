@@ -28,16 +28,16 @@ class ShopifyCustomer(EcommerceCustomer):
 		customer_group = self.setting.customer_group
 		super().sync_customer(customer_name, customer_group)
 
-		billing_address = customer.get("billing_address", {}) or customer.get("default_address")
 		shipping_address = customer.get("shipping_address", {})
+		billing_address = customer.get("billing_address", {}) or customer.get("default_address")
 
-		if billing_address:
-			self.create_customer_address(
-				customer_name, billing_address, address_type="Billing", email=customer.get("email")
-			)
 		if shipping_address:
 			self.create_customer_address(
 				customer_name, shipping_address, address_type="Shipping", email=customer.get("email")
+			)
+		if billing_address:
+			self.create_customer_address(
+				customer_name, billing_address, address_type="Billing", email=customer.get("email")
 			)
 
 		self.create_customer_contact(customer)

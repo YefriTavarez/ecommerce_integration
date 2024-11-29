@@ -138,6 +138,9 @@ def create_ecommerce_item(
 	item_dict contains fields necessary to populate Item doctype.
 	"""
 
+	# if has_variants:
+	# 	frappe.throw(_("Variants not supported yet"))
+
 	# SKU not allowed for template items
 	sku = cstr(sku) if not has_variants else None
 
@@ -154,9 +157,12 @@ def create_ecommerce_item(
 
 	item.update(item_dict)
 
-	new_item = frappe.get_doc(item)
-	new_item.flags.from_integration = True
-	new_item.insert(ignore_permissions=True, ignore_mandatory=True)
+	if frappe.db.exists("Item", sku):
+		new_item = frappe.get_doc("Item", sku)
+	else:
+		new_item = frappe.get_doc(item)
+		new_item.flags.from_integration = True
+		new_item.insert(ignore_permissions=True, ignore_mandatory=True)
 
 	ecommerce_item = frappe.get_doc(
 		{

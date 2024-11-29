@@ -3,13 +3,16 @@ from typing import Dict
 import frappe
 from frappe import _
 from frappe.utils.nestedset import get_root_of
-
+from ecommerce_integrations.shopify.constants import (
+	SETTING_DOCTYPE,
+)
 
 class EcommerceCustomer:
 	def __init__(self, customer_id: str, customer_id_field: str, integration: str):
 		self.customer_id = customer_id
 		self.customer_id_field = customer_id_field
 		self.integration = integration
+		self.setting = frappe.get_doc(SETTING_DOCTYPE)
 
 	def is_synced(self) -> bool:
 		"""Check if customer on Ecommerce site is synced with ERPNext"""
@@ -34,6 +37,9 @@ class EcommerceCustomer:
 				"customer_group": customer_group,
 				"territory": get_root_of("Territory"),
 				"customer_type": _("Individual"),
+				"default_currency": self.setting.default_customer_currency,
+				"default_price_list": self.setting.default_customer_price_list,
+				"payment_terms": self.setting.default_customer_payment_terms,
 			}
 		)
 
@@ -60,6 +66,19 @@ class EcommerceCustomer:
 
 		if address.get("state") and address.get("state") not in self.existing_states:
 			self.create_state(address.get("state"))
+
+		if not customer_doc.accounts:
+			state_account = self.setting.out_state_account
+			default_state = "Washington"
+
+			if address.get("state") == default_state:
+				state_account = self.setting.in_state_account
+
+			customer_doc.append("accounts", {
+				"company": self.setting.company, 
+				"account": state_account,
+			})
+			customer_doc.save()
 
 		frappe.get_doc(
 			{

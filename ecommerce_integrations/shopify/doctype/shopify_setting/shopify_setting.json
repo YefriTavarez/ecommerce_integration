@@ -16,13 +16,18 @@
   "webhooks",
   "customer_settings_section",
   "default_customer",
+  "default_customer_currency",
+  "default_customer_payment_terms",
   "column_break_14",
   "customer_group",
+  "default_customer_price_list",
   "company_dependent_settings_section",
   "company",
   "cash_bank_account",
   "column_break_19",
   "cost_center",
+  "in_state_account",
+  "out_state_account",
   "section_break_25",
   "sales_order_series",
   "delivery_note_series",
@@ -387,12 +392,42 @@
    "fieldtype": "Link",
    "label": "Default Shipping Charges Account",
    "options": "Account"
+  },
+  {
+   "fieldname": "in_state_account",
+   "fieldtype": "Link",
+   "label": "In State Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "out_state_account",
+   "fieldtype": "Link",
+   "label": "Out State Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "default_customer_currency",
+   "fieldtype": "Link",
+   "label": "Default Customer Currency",
+   "options": "Currency"
+  },
+  {
+   "fieldname": "default_customer_price_list",
+   "fieldtype": "Link",
+   "label": "Default Customer Price List",
+   "options": "Price List"
+  },
+  {
+   "fieldname": "default_customer_payment_terms",
+   "fieldtype": "Link",
+   "label": "Default Customer Payment Terms",
+   "options": "Payment Terms Template"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2023-10-24 10:38:49.247431",
+ "modified": "2024-11-11 20:04:57.817708",
  "modified_by": "Administrator",
  "module": "shopify",
  "name": "Shopify Setting",
