@@ -25,7 +25,7 @@ DEFAULT_TAX_FIELDS = {
 }
 
 
-def sync_sales_order(payload, request_id=None):
+def sync_sales_order(payload, request_id=None, debug=False):
 	order = payload
 	frappe.set_user("Administrator")
 	frappe.flags.request_id = request_id
@@ -50,6 +50,8 @@ def sync_sales_order(payload, request_id=None):
 		setting = frappe.get_doc(SETTING_DOCTYPE)
 		create_order(order, setting)
 	except Exception as e:
+		if debug:
+			raise e
 		frappe.log_error()
 		create_shopify_log(status="Error", exception=e, rollback=True)
 	else:
@@ -104,6 +106,7 @@ def create_sales_order(shopify_order, setting, company=None):
 					"product_exists": product_exists,
 					"item_name": f"Product Bundle > {whole_sku}" if len(sku_list) > 1 else line_item.get("item_name"),
 					"price": price,
+					"shopify_price": float(line_item.get("price", 0)),
 				})
 
 				# line_item = line_item.copy()
@@ -186,6 +189,9 @@ def create_sales_order(shopify_order, setting, company=None):
 		so.flags.shopify_order_json = json.dumps(shopify_order)
 		so.save(ignore_permissions=True)
 
+		if so.total_taxes_and_charges != flt(shopify_order.get("total_tax"), 2):
+			frappe.throw("Total tax mismatch")
+
 		same_total = flt(so.grand_total, 2) == flt(shopify_order.get("total_price"), 2)
 
 		if same_total:
@@ -244,6 +250,7 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive):
 					"item_name": item_name or item_code,  
 					"description": description,
 					"rate": _get_item_price(shopify_item, taxes_inclusive),
+					"shopify_rate": shopify_item.get("shopify_price"),
 					"delivery_date": get_next_working_day(),
 					"qty": shopify_item.get("quantity"),
 					"stock_uom": shopify_item.get("uom") or "Nos",
@@ -320,6 +327,7 @@ def get_order_taxes(shopify_order, setting, items):
 			taxes.append(
 				{
 					"charge_type": "Actual",
+					"rate": tax.get("rate"),
 					"account_head": get_tax_account_head(tax, charge_type="sales_tax", shopify_order=shopify_order),
 					"description": (
 						get_tax_account_description(tax) or f"{tax.get('title')} - {tax.get('rate') * 100.0:.2f}%"
@@ -438,6 +446,8 @@ def get_tax_account_description(tax):
 def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, taxes_inclusive=False):
 	"""Shipping lines represents the shipping details,
 	each such shipping detail consists of a list of tax_lines"""
+	tax_details = calculate_taxes(items, shipping_lines, taxes)
+
 	shipping_as_item = cint(setting.add_shipping_as_item) and setting.shipping_item
 	for shipping_charge in shipping_lines:
 		if shipping_charge.get("price"):
@@ -473,7 +483,11 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, taxe
 					}
 				)
 
+		
 		for tax in shipping_charge.get("tax_lines"):
+			if not flt(tax.get("rate")):
+				continue
+
 			taxes.append(
 				{
 					"charge_type": "Actual",
@@ -481,7 +495,8 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, taxe
 					"description": (
 						get_tax_account_description(tax) or f"{tax.get('title')} - {tax.get('rate') * 100.0:.2f}%"
 					),
-					"tax_amount": tax["price"],
+					# "tax_amount": tax["price"],
+					"tax_amount": tax_details.get(tax.get("title"), 0.0),
 					"cost_center": setting.cost_center,
 					"item_wise_tax_detail": {
 						setting.shipping_item: [flt(tax.get("rate")) * 100, flt(tax.get("price"))]
@@ -491,6 +506,111 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, taxe
 					"dont_recompute_tax": 1,
 				}
 			)
+
+def calculate_subtotal(line_items: list[dict]) -> float:
+	"""
+	Calculates the subtotal of the order based on line items.
+	It considers the total price of each item minus any applied `total_discount`.
+
+	:param line_items: List of line items from Shopify webhook
+	:return: Subtotal amount as a float
+	"""
+	if not isinstance(line_items, list):
+		frappe.throw("Invalid data: 'line_items' should be a list.")
+
+	subtotal = 0.0
+
+	for item in line_items:
+		if not isinstance(item, dict):
+			frappe.throw("Invalid data: Each line item must be a dictionary.")
+
+		price = flt(item.get("shopify_rate", 2))
+		quantity = flt(item.get("qty", 2))
+		total_discount = flt(item.get("total_discount", 0.0))
+
+		if price < 0 or quantity < 0 or total_discount < 0:
+			frappe.throw("Invalid data: Price, quantity, and discount must be non-negative.")
+
+		subtotal += (price * quantity) - total_discount
+
+	return round(subtotal, 2)
+
+
+def calculate_shipping_total(shipping_lines: list[dict]) -> float:
+	"""
+	Extracts the total freight (shipping amount) from the shipping_lines array.
+
+	:param shipping_lines: List of shipping lines from Shopify webhook
+	:return: Total shipping cost as a float
+	"""
+	if not isinstance(shipping_lines, list):
+		frappe.throw("Invalid data: 'shipping_lines' should be a list.")
+
+	total_shipping = 0.0
+
+	for shipping in shipping_lines:
+		if not isinstance(shipping, dict):
+			frappe.throw("Invalid data: Each shipping line must be a dictionary.")
+
+		price = float(shipping.get("price", 0.0))
+
+		if price < 0:
+			frappe.throw("Invalid data: Shipping price cannot be negative.")
+
+		total_shipping += price
+
+	return round(total_shipping, 2)
+
+
+def calculate_taxes(line_items: list[dict], shipping_lines: list[dict], tax_lines: list[dict]) -> dict[str, float]:
+	"""
+	Calculates the total tax amount for the order.
+	Formula: (subtotal + shipping) * tax_rate_per_location.
+
+	:param line_items: List of line items from Shopify webhook
+	:param shipping_lines: List of shipping lines from Shopify webhook
+	:param tax_lines: List of tax details
+	:return: Dictionary containing total tax amount for each tax location
+	"""
+	if not isinstance(tax_lines, list):
+		frappe.throw("Invalid data: 'tax_lines' should be a list.")
+
+	subtotal = calculate_subtotal(line_items)
+	shipping_total = calculate_shipping_total(shipping_lines)
+
+	if subtotal != 551:
+		frappe.throw(f"Invalid data {subtotal}: Subtotal is not equal to 551")
+
+	if shipping_total != 54.04:
+		frappe.throw(f"Invalid data{shipping_total}: Shipping total is not equal to 54.04")
+
+	total_amount = subtotal + shipping_total
+
+	if total_amount < 0:
+		frappe.throw("Invalid data: Order total cannot be negative.")
+
+	# total_tax = 0.0
+
+	out = dict()
+	for tax in tax_lines:
+		if not isinstance(tax, dict):
+			frappe.throw("Invalid data: Each tax line must be a dictionary.")
+
+		rate = float(tax.get("rate", 0.0))
+
+		if rate < 0:
+			frappe.throw("Invalid data: Tax rate cannot be negative.")
+
+		tax_amount = total_amount * rate
+		# total_tax += tax_amount
+
+		# if 
+
+		out[tax.get("title")] = tax_amount
+
+	return out
+
+	# return round(total_tax, 2)
 
 
 def get_sales_order(order_id):
