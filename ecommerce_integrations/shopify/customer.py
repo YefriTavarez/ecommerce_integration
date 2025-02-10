@@ -28,16 +28,17 @@ class ShopifyCustomer(EcommerceCustomer):
 		customer_group = self.setting.customer_group
 		super().sync_customer(customer_name, customer_group)
 
-		shipping_address = customer.get("shipping_address", {})
 		billing_address = customer.get("billing_address", {}) or customer.get("default_address")
+		shipping_address = customer.get("shipping_address", {})
+
+		if billing_address:
+			self.create_customer_address(
+				customer_name, billing_address, address_type="Billing", email=customer.get("email")
+			)
 
 		if shipping_address:
 			self.create_customer_address(
 				customer_name, shipping_address, address_type="Shipping", email=customer.get("email")
-			)
-		if billing_address:
-			self.create_customer_address(
-				customer_name, billing_address, address_type="Billing", email=customer.get("email")
 			)
 
 		self.create_customer_contact(customer)
@@ -122,6 +123,7 @@ def _map_address_fields(shopify_address, customer_name, address_type, email):
 		"pincode": shopify_address.get("zip"),
 		"country": shopify_address.get("country"),
 		"email_id": email,
+		"company": shopify_address.get("company"),
 	}
 
 	phone = shopify_address.get("phone")

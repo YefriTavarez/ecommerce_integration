@@ -1,30 +1,23 @@
 import json
 from typing import Literal, Optional
 
-import frappe
-from frappe import _
-from frappe.utils import cint, cstr, flt, get_datetime, getdate, nowdate
-
-from erpnext.utilities.product import get_price
-
 from shopify.collection import PaginatedIterator
 from shopify.resources import Order
 
+import frappe
 from ecommerce_integrations.shopify.connection import temp_shopify_session
 from ecommerce_integrations.shopify.constants import (
-	CUSTOMER_ID_FIELD,
-	EVENT_MAPPER,
-	ORDER_ID_FIELD,
-	ORDER_ITEM_DISCOUNT_FIELD,
-	ORDER_NUMBER_FIELD,
-	ORDER_STATUS_FIELD,
-	SETTING_DOCTYPE,
-)
+    CUSTOMER_ID_FIELD, EVENT_MAPPER, ORDER_ID_FIELD, ORDER_ITEM_DISCOUNT_FIELD,
+    ORDER_NUMBER_FIELD, ORDER_STATUS_FIELD, SETTING_DOCTYPE)
 from ecommerce_integrations.shopify.customer import ShopifyCustomer
-from ecommerce_integrations.shopify.product import create_items_if_not_exist, get_item_code
+from ecommerce_integrations.shopify.product import (create_items_if_not_exist,
+                                                    get_item_code)
 from ecommerce_integrations.shopify.utils import create_shopify_log
 from ecommerce_integrations.utils.price_list import get_dummy_price_list
 from ecommerce_integrations.utils.taxation import get_dummy_tax_category
+from erpnext.utilities.product import get_price
+from frappe import _
+from frappe.utils import cint, cstr, flt, get_datetime, getdate, nowdate
 
 DEFAULT_TAX_FIELDS = {
 	"sales_tax": "default_sales_tax_account",
@@ -95,26 +88,44 @@ def create_sales_order(shopify_order, setting, company=None):
 			# ex. "sku1 + sku2 + sku3" or "sku1"
 			sku_list = whole_sku.split("+")
 			for idx, sku in enumerate(sku_list):
+				sku = sku.strip()
 				line_item = line_item.copy()
+				product_exists = frappe.db.exists("Item", {"item_code": sku.strip()})
+				item_price = get_price(
+					sku.strip(), 
+					"Standard Selling", 
+					customer_group=setting.customer_group, 
+					company=setting.company,
+				)
+				price = item_price.get("price_list_rate") if item_price else 0
+
 				line_item.update({
 					"sku": sku.strip(),
-					"product_exists": frappe.db.exists("Item", {"item_code": sku.strip()}),
-					"item_name": f"Product Bundle > {whole_sku}" if len(sku_list) > 1 else line_item.get("item_name")
+					"product_exists": product_exists,
+					"item_name": f"Product Bundle > {whole_sku}" if len(sku_list) > 1 else line_item.get("item_name"),
+					"price": price,
 				})
 
-				if idx > 0:
-					# set rate to 0 for additional items in the bundle
-					price = get_price(
-						sku.strip(), 
-						"Standard Selling", 
-						customer_group=setting.customer_group, 
-						company=setting.company)
+				# line_item = line_item.copy()
+				# line_item.update({
+				# 	"sku": sku.strip(),
+				# 	"product_exists": frappe.db.exists("Item", {"item_code": sku.strip()}),
+				# 	"item_name": f"Product Bundle > {whole_sku}" if len(sku_list) > 1 else line_item.get("item_name"),
+				# })
 
-					if price:
-						if price.get("price_list_rate"):
-							line_item["price"] = price.get("price_list_rate")
+				# if idx > 0:
+				# 	# set rate to 0 for additional items in the bundle
+				# 	price = get_price(
+				# 		sku.strip(), 
+				# 		"Standard Selling", 
+				# 		customer_group=setting.customer_group, 
+				# 		company=setting.company)
 
-					line_item["price"] = 0
+				# 	if price:
+				# 		if price.get("price_list_rate"):
+				# 			line_item["price"] = price.get("price_list_rate")
+
+				# 	line_item["price"] = 0
 
 				line_items.append(line_item)
 
@@ -135,10 +146,16 @@ def create_sales_order(shopify_order, setting, company=None):
 
 			create_shopify_log(status="Error", exception=message, rollback=True)
 
-			print("Items not found in Shopify Product")
+			# print("Items not found in Shopify Product")
 			return ""
 
 		taxes = get_order_taxes(shopify_order, setting, items)
+
+		try:
+			shipping_method = shopify_order.get("shipping_lines")[0].get("title")
+		except IndexError:
+			shipping_method = ""
+
 
 		transaction_date = getdate(shopify_order.get("created_at")) or nowdate()
 		so = frappe.get_doc(
@@ -151,13 +168,15 @@ def create_sales_order(shopify_order, setting, company=None):
 				"po_date": transaction_date,
 				"customer": customer,
 				"transaction_date": transaction_date,
-				"delivery_date": transaction_date,
+				"delivery_date": get_next_working_day(),
+				"shipping_method": shipping_method,
 				"company": setting.company,
 				"selling_price_list": get_dummy_price_list(),
 				"ignore_pricing_rule": 1,
 				"items": items,
 				"taxes": taxes,
 				"tax_category": get_dummy_tax_category(),
+				"shopify_total": shopify_order.get("total_price"),
 			}
 		)
 
@@ -167,16 +186,14 @@ def create_sales_order(shopify_order, setting, company=None):
 		so.flags.shopify_order_json = json.dumps(shopify_order)
 		so.save(ignore_permissions=True)
 
-
-		same_total = True
-
-		if flt(so.grand_total) != flt(shopify_order.get("total_price")):
-			same_total = False
+		same_total = flt(so.grand_total, 2) == flt(shopify_order.get("total_price"), 2)
 
 		if same_total:
 			so.submit()
+			so.run_method("new_sales_order")
 		else:
 			so.save()
+			so.add_comment("Comment", text="Order total mismatch")
 			so.run_method("notify_total_mismatch")
 
 		if shopify_order.get("note"):
@@ -227,7 +244,7 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive):
 					"item_name": item_name or item_code,  
 					"description": description,
 					"rate": _get_item_price(shopify_item, taxes_inclusive),
-					"delivery_date": delivery_date,
+					"delivery_date": get_next_working_day(),
 					"qty": shopify_item.get("quantity"),
 					"stock_uom": shopify_item.get("uom") or "Nos",
 					"warehouse": setting.warehouse,
@@ -240,6 +257,31 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive):
 			items = []
 
 	return items
+
+
+def is_more_than_14():
+    if hour := frappe.utils.now_datetime().strftime("%H"):
+        return hour >= "14"
+
+
+def get_next_working_day(date: str=None, dont_change_date: bool=False):
+    if not date:
+        date = frappe.utils.today()
+    
+    if is_more_than_14() and not dont_change_date:
+        # If it's more than 14:00, we should consider the next day
+        date = frappe.utils.add_days(date, 1)
+
+    isholiday = frappe.db.exists(
+        "Holiday", { "holiday_date": date }
+    )
+
+    if isholiday:
+        return get_next_working_day(
+            frappe.utils.add_days(date, 1), dont_change_date=True
+        )
+    
+    return date
 
 
 def _get_item_price(line_item, taxes_inclusive: bool) -> float:

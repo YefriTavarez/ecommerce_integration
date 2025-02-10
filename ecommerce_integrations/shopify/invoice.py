@@ -46,6 +46,9 @@ def create_sales_invoice(shopify_order, setting, so):
 		sales_invoice.set_posting_time = 1
 		sales_invoice.posting_date = posting_date
 		sales_invoice.due_date = posting_date
+		sales_invoice.shipping_method = so.shipping_method
+		sales_invoice.tc_name = setting.default_sales_terms_and_conditions
+		sales_invoice.terms = frappe.get_value("Terms and Conditions", setting.default_sales_terms_and_conditions, "terms")
 		sales_invoice.naming_series = setting.sales_invoice_series or "SI-Shopify-"
 		sales_invoice.flags.ignore_mandatory = True
 		set_cost_center(sales_invoice.items, setting.cost_center)
