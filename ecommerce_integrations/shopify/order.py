@@ -243,13 +243,36 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive):
 			erpnext_item = frappe.get_doc("Item", item_code)
 			item_name = erpnext_item.item_name
 			description = erpnext_item.description
+			
+			def get_rate():
+				qty = shopify_item.get("quantity")
+				price = shopify_item.get("shopify_price")
+				total_discount = _get_total_discount(shopify_item)
+
+				total_taxes = 0.0
+				for tax in shopify_item.get("tax_lines"):
+					total_taxes += flt(
+						tax.get("price")
+					)
+
+				return price - (total_taxes + total_discount) / qty
+
+			item_price = get_price(
+				item_code,
+				"Standard Selling",
+				customer_group=setting.customer_group,
+				company=setting.company,
+			)
 
 			items.append(
 				{
 					"item_code": item_code,
 					"item_name": item_name or item_code,  
 					"description": description,
-					"rate": _get_item_price(shopify_item, taxes_inclusive),
+					"price_list_rate": item_price.get("price_list_rate"),
+					"base_price_list_rate": item_price.get("price_list_rate"),
+					# "rate": _get_item_price(shopify_item, taxes_inclusive),
+					"rate":  get_rate(),
 					"shopify_rate": shopify_item.get("shopify_price"),
 					"delivery_date": get_next_working_day(),
 					"qty": shopify_item.get("quantity"),
@@ -318,43 +341,91 @@ def get_order_taxes(shopify_order, setting, items):
 	taxes = []
 	line_items = shopify_order.get("line_items")
 
-	for line_item in line_items:
-		item_code = get_item_code(line_item)
-		for tax in line_item.get("tax_lines"):
-			if not flt(tax.get("rate")):
-				continue
 
-			taxes.append(
-				{
-					"charge_type": "Actual",
-					"rate": tax.get("rate"),
-					"account_head": get_tax_account_head(tax, charge_type="sales_tax", shopify_order=shopify_order),
-					"description": (
-						get_tax_account_description(tax) or f"{tax.get('title')} - {tax.get('rate') * 100.0:.2f}%"
-					),
-					"tax_amount": tax.get("price"),
-					"included_in_print_rate": 0,
-					"cost_center": setting.cost_center,
-					"item_wise_tax_detail": {item_code: [flt(tax.get("rate")) * 100, flt(tax.get("price"))]},
-					"dont_recompute_tax": 1,
-				}
-			)
+	# for line_item in line_items:
+		# tax_details = calculate_taxes(items, shopify_order.get("shipping_lines"), line_item.get("tax_lines"))
 
-	update_taxes_with_shipping_lines(
-		taxes,
-		shopify_order.get("shipping_lines"),
-		setting,
-		items,
-		taxes_inclusive=shopify_order.get("taxes_included"),
+		# print(tax_details)
+
+		# item_code = get_item_code(line_item)
+		# for tax in line_item.get("tax_lines"):
+		# 	if not flt(tax.get("rate")):
+		# 		continue
+
+		# 	taxes.append(
+		# 		{
+		# 			"charge_type": "Actual",
+		# 			"rate": tax.get("rate"),
+		# 			"account_head": get_tax_account_head(tax, charge_type="sales_tax", shopify_order=shopify_order),
+		# 			"description": (
+		# 				get_tax_account_description(tax) or f"{tax.get('title')} - {tax.get('rate') * 100.0:.2f}%"
+		# 			),
+		# 			# "tax_amount": tax.get("price"),
+		# 			"tax_amount": tax_details.get(tax.get("title"), 0.0),
+		# 			"included_in_print_rate": 0,
+		# 			"cost_center": setting.cost_center,
+		# 			"item_wise_tax_detail": {item_code: [flt(tax.get("rate")) * 100, flt(tax.get("price"))]},
+		# 			"dont_recompute_tax": 1,
+		# 		}
+		# 	)
+
+
+
+	tax_details = calculate_taxes(
+		items, shopify_order.get("shipping_lines"), shopify_order.get("tax_lines")
 	)
 
-	if cint(setting.consolidate_taxes):
-		taxes = consolidate_order_taxes(taxes)
+	for tax_line in shopify_order.get("tax_lines", []):
+		if not flt(tax_line.get("rate")): # skip if rate is 0
+			continue
 
-	for row in taxes:
-		tax_detail = row.get("item_wise_tax_detail")
-		if isinstance(tax_detail, dict):
-			row["item_wise_tax_detail"] = json.dumps(tax_detail)
+		taxes.append(
+			{
+				"charge_type": "Actual",
+				"rate": tax_line.get("rate"),
+				"shopify_tax_rate": flt(tax_line.get("rate")) * 100,
+				"account_head": get_tax_account_head(tax_line, charge_type="sales_tax", shopify_order=shopify_order),
+				"description": (
+					get_tax_account_description(tax_line) or f"{tax_line.get('title')} - {tax_line.get('rate') * 100.0:.2f}%"
+				),
+				"tax_amount": tax_details.get(tax_line.get("title"), 0.0),
+				"cost_center": setting.cost_center,
+				"dont_recompute_tax": 1,
+			}
+		)
+
+	# let's add the shipping charge as an item to the items
+	for shipping_charge in shopify_order.get("shipping_lines"):
+		shipping_discounts = shipping_charge.get("discount_allocations") or []
+		total_discount = sum(flt(discount.get("amount")) for discount in shipping_discounts)
+			
+		shipping_charge_amount = flt(shipping_charge["price"]) - flt(total_discount)
+		items.append(
+			{
+				"item_code": setting.shipping_item,
+				"rate": shipping_charge_amount,
+				"delivery_date": items[-1]["delivery_date"] if items else nowdate(),
+				"qty": 1,
+				"stock_uom": "Nos",
+				"warehouse": setting.warehouse,
+			}
+		)
+
+	# update_taxes_with_shipping_lines(
+	# 	taxes,
+	# 	shopify_order.get("shipping_lines"),
+	# 	setting,
+	# 	items,
+	# 	taxes_inclusive=shopify_order.get("taxes_included"),
+	# )
+
+	# if cint(setting.consolidate_taxes):
+	# 	taxes = consolidate_order_taxes(taxes)
+
+	# for row in taxes:
+	# 	tax_detail = row.get("item_wise_tax_detail")
+	# 	if isinstance(tax_detail, dict):
+	# 		row["item_wise_tax_detail"] = json.dumps(tax_detail)
 
 	return taxes
 
@@ -578,11 +649,11 @@ def calculate_taxes(line_items: list[dict], shipping_lines: list[dict], tax_line
 	subtotal = calculate_subtotal(line_items)
 	shipping_total = calculate_shipping_total(shipping_lines)
 
-	if subtotal != 551:
-		frappe.throw(f"Invalid data {subtotal}: Subtotal is not equal to 551")
+	# if subtotal != 551:
+	# 	frappe.throw(f"Invalid data {subtotal}: Subtotal is not equal to 551")
 
-	if shipping_total != 54.04:
-		frappe.throw(f"Invalid data{shipping_total}: Shipping total is not equal to 54.04")
+	# if shipping_total != 54.04:
+	# 	frappe.throw(f"Invalid data{shipping_total}: Shipping total is not equal to 54.04")
 
 	total_amount = subtotal + shipping_total
 

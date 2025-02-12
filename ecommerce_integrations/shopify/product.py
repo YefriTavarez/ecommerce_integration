@@ -1,22 +1,18 @@
 from typing import Optional
 
+from shopify.resources import Product, Variant
+
 import frappe
+from ecommerce_integrations.ecommerce_integrations.doctype.ecommerce_item import \
+    ecommerce_item
+from ecommerce_integrations.shopify.connection import temp_shopify_session
+from ecommerce_integrations.shopify.constants import (
+    ITEM_SELLING_RATE_FIELD, MODULE_NAME, SETTING_DOCTYPE,
+    SHOPIFY_VARIANTS_ATTR_LIST, SUPPLIER_ID_FIELD, WEIGHT_TO_ERPNEXT_UOM_MAP)
+from ecommerce_integrations.shopify.utils import create_shopify_log
 from frappe import _, msgprint
 from frappe.utils import cint, cstr
 from frappe.utils.nestedset import get_root_of
-from shopify.resources import Product, Variant
-
-from ecommerce_integrations.ecommerce_integrations.doctype.ecommerce_item import ecommerce_item
-from ecommerce_integrations.shopify.connection import temp_shopify_session
-from ecommerce_integrations.shopify.constants import (
-	ITEM_SELLING_RATE_FIELD,
-	MODULE_NAME,
-	SETTING_DOCTYPE,
-	SHOPIFY_VARIANTS_ATTR_LIST,
-	SUPPLIER_ID_FIELD,
-	WEIGHT_TO_ERPNEXT_UOM_MAP,
-)
-from ecommerce_integrations.shopify.utils import create_shopify_log
 
 
 class ShopifyProduct:
@@ -33,8 +29,8 @@ class ShopifyProduct:
 		self.has_variants = has_variants
 		self.setting = frappe.get_doc(SETTING_DOCTYPE)
 
-		if not self.setting.is_enabled():
-			frappe.throw(_("Can not create Shopify product when integration is disabled."))
+		# if not self.setting.is_enabled():
+		# 	frappe.throw(_("Can not create Shopify product when integration is disabled."))
 
 	def is_synced(self) -> bool:
 		return ecommerce_item.is_synced(

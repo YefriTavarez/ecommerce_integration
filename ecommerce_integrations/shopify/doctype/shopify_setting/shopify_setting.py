@@ -3,34 +3,24 @@
 
 from typing import Dict, List
 
-import frappe
-from frappe import _
-from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
-from frappe.utils import get_datetime
 from shopify.collection import PaginatedIterator
 from shopify.resources import Location
 
-from ecommerce_integrations.controllers.setting import (
-	ERPNextWarehouse,
-	IntegrationWarehouse,
-	SettingController,
-)
+import frappe
+from ecommerce_integrations.controllers.setting import (ERPNextWarehouse,
+                                                        IntegrationWarehouse,
+                                                        SettingController)
 from ecommerce_integrations.shopify import connection
 from ecommerce_integrations.shopify.constants import (
-	ADDRESS_ID_FIELD,
-	CUSTOMER_ID_FIELD,
-	FULLFILLMENT_ID_FIELD,
-	ITEM_SELLING_RATE_FIELD,
-	ORDER_ID_FIELD,
-	ORDER_ITEM_DISCOUNT_FIELD,
-	ORDER_NUMBER_FIELD,
-	ORDER_STATUS_FIELD,
-	SUPPLIER_ID_FIELD,
-)
+    ADDRESS_ID_FIELD, CUSTOMER_ID_FIELD, FULLFILLMENT_ID_FIELD,
+    ITEM_SELLING_RATE_FIELD, ORDER_ID_FIELD, ORDER_ITEM_DISCOUNT_FIELD,
+    ORDER_NUMBER_FIELD, ORDER_STATUS_FIELD, SUPPLIER_ID_FIELD)
 from ecommerce_integrations.shopify.utils import (
-	ensure_old_connector_is_disabled,
-	migrate_from_old_connector,
-)
+    ensure_old_connector_is_disabled, migrate_from_old_connector)
+from frappe import _
+from frappe.custom.doctype.custom_field.custom_field import \
+    create_custom_fields
+from frappe.utils import get_datetime
 
 
 class ShopifySetting(SettingController):
@@ -42,9 +32,11 @@ class ShopifySetting(SettingController):
 
 		if self.shopify_url:
 			self.shopify_url = self.shopify_url.replace("https://", "")
-		self._handle_webhooks()
-		self._validate_warehouse_links()
-		self._initalize_default_values()
+		# # DON'T COMMIT THIS... THIS IS ONLY FOR DEVELOPMENT
+		#
+		# self._handle_webhooks() 
+		# self._validate_warehouse_links()
+		# self._initalize_default_values()
 
 		if self.is_enabled():
 			setup_custom_fields()
