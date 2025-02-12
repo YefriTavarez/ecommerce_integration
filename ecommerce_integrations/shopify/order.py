@@ -1,5 +1,5 @@
 import json
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 from shopify.collection import PaginatedIterator
 from shopify.resources import Order
@@ -530,7 +530,7 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, taxe
 				}
 			)
 
-def calculate_subtotal(line_items: list[dict]) -> float:
+def calculate_subtotal(line_items: list[dict], as_list=False) -> Union[float, list[float]]:
 	"""
 	Calculates the subtotal of the order based on line items.
 	It considers the total price of each item minus any applied `total_discount`.
@@ -543,6 +543,8 @@ def calculate_subtotal(line_items: list[dict]) -> float:
 
 	subtotal = 0.0
 
+	outlist = []
+
 	for item in line_items:
 		if not isinstance(item, dict):
 			frappe.throw("Invalid data: Each line item must be a dictionary.")
@@ -554,7 +556,14 @@ def calculate_subtotal(line_items: list[dict]) -> float:
 		if price < 0 or quantity < 0 or total_discount < 0:
 			frappe.throw("Invalid data: Price, quantity, and discount must be non-negative.")
 
-		subtotal += (price * quantity) - total_discount
+		_sub = (price * quantity) - total_discount
+		if as_list:
+			outlist.append(_sub)
+		else:
+			subtotal += _sub
+
+	if as_list:
+		return outlist
 
 	return round(subtotal, 2)
 
@@ -598,7 +607,7 @@ def calculate_taxes(line_items: list[dict], shipping_lines: list[dict], tax_line
 	if not isinstance(tax_lines, list):
 		frappe.throw("Invalid data: 'tax_lines' should be a list.")
 
-	subtotal = calculate_subtotal(line_items)
+	subtotals = calculate_subtotal(line_items, as_list=True)
 	shipping_total = calculate_shipping_total(shipping_lines)
 
 	# if subtotal != 551:
@@ -607,29 +616,31 @@ def calculate_taxes(line_items: list[dict], shipping_lines: list[dict], tax_line
 	# if shipping_total != 54.04:
 	# 	frappe.throw(f"Invalid data{shipping_total}: Shipping total is not equal to 54.04")
 
-	total_amount = subtotal + shipping_total
+	all_subtotals = subtotals + [shipping_total]
 
-	if total_amount < 0:
-		frappe.throw("Invalid data: Order total cannot be negative.")
+	# if total_amount < 0:
+	# 	frappe.throw("Invalid data: Order total cannot be negative.")
 
 	# total_tax = 0.0
 
 	out = dict()
-	for tax in tax_lines:
-		if not isinstance(tax, dict):
-			frappe.throw("Invalid data: Each tax line must be a dictionary.")
+	for subtotal in all_subtotals:
+		for tax in tax_lines:
+			if not isinstance(tax, dict):
+				frappe.throw("Invalid data: Each tax line must be a dictionary.")
 
-		rate = float(tax.get("rate", 0.0))
+			rate = float(tax.get("rate", 0.0))
 
-		if rate < 0:
-			frappe.throw("Invalid data: Tax rate cannot be negative.")
+			if rate < 0:
+				frappe.throw("Invalid data: Tax rate cannot be negative.")
 
-		tax_amount = total_amount * rate
-		# total_tax += tax_amount
+			tax_amount = round(subtotal * rate, 2)
+			# total_tax += tax_amount
 
-		# if 
+			# if 
 
-		out[tax.get("title")] = tax_amount
+			out.setdefault(tax.get("title"), 0)
+			out[tax.get("title")] += tax_amount
 
 	return out
 
