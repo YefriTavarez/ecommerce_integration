@@ -7,11 +7,11 @@ from shopify.resources import Order
 import frappe
 from ecommerce_integrations.shopify.connection import temp_shopify_session
 from ecommerce_integrations.shopify.constants import (
-	CUSTOMER_ID_FIELD, EVENT_MAPPER, ORDER_ID_FIELD, ORDER_ITEM_DISCOUNT_FIELD,
-	ORDER_NUMBER_FIELD, ORDER_STATUS_FIELD, SETTING_DOCTYPE)
+    CUSTOMER_ID_FIELD, EVENT_MAPPER, ORDER_ID_FIELD, ORDER_ITEM_DISCOUNT_FIELD,
+    ORDER_NUMBER_FIELD, ORDER_STATUS_FIELD, SETTING_DOCTYPE)
 from ecommerce_integrations.shopify.customer import ShopifyCustomer
 from ecommerce_integrations.shopify.product import (create_items_if_not_exist,
-													get_item_code)
+                                                    get_item_code)
 from ecommerce_integrations.shopify.utils import create_shopify_log
 from ecommerce_integrations.utils.price_list import get_dummy_price_list
 from ecommerce_integrations.utils.taxation import get_dummy_tax_category
@@ -94,8 +94,11 @@ def create_sales_order(shopify_order, setting, company=None):
 				line_item = line_item.copy()
 				product_exists = frappe.db.exists("Item", {"item_code": sku})
 
+				is_product_bundle = False
+
 				# Si es un product bundle, obtenemos el precio de cada item en el bundle
 				if len(sku_list) > 1:
+					is_product_bundle = True
 					price_data = get_price(
 						sku, 
 						"Standard Selling", 
@@ -113,7 +116,7 @@ def create_sales_order(shopify_order, setting, company=None):
 					"product_exists": product_exists,
 					"item_name": f"Product Bundle > {whole_sku}" if len(sku_list) > 1 else line_item.get("item_name"),
 					"price": item_price,
-					"shopify_price": float(line_item.get("price", 0)),
+					"shopify_price": float(line_item.get("price", 0)) if not is_product_bundle else item_price,
 				})
 
 				line_items.append(line_item)
@@ -319,36 +322,6 @@ def _get_total_discount(line_item) -> float:
 def get_order_taxes(shopify_order, setting, items):
 	taxes = []
 	line_items = shopify_order.get("line_items")
-
-
-	# for line_item in line_items:
-		# tax_details = calculate_taxes(items, shopify_order.get("shipping_lines"), line_item.get("tax_lines"))
-
-		# print(tax_details)
-
-		# item_code = get_item_code(line_item)
-		# for tax in line_item.get("tax_lines"):
-		# 	if not flt(tax.get("rate")):
-		# 		continue
-
-		# 	taxes.append(
-		# 		{
-		# 			"charge_type": "Actual",
-		# 			"rate": tax.get("rate"),
-		# 			"account_head": get_tax_account_head(tax, charge_type="sales_tax", shopify_order=shopify_order),
-		# 			"description": (
-		# 				get_tax_account_description(tax) or f"{tax.get('title')} - {tax.get('rate') * 100.0:.2f}%"
-		# 			),
-		# 			# "tax_amount": tax.get("price"),
-		# 			"tax_amount": tax_details.get(tax.get("title"), 0.0),
-		# 			"included_in_print_rate": 0,
-		# 			"cost_center": setting.cost_center,
-		# 			"item_wise_tax_detail": {item_code: [flt(tax.get("rate")) * 100, flt(tax.get("price"))]},
-		# 			"dont_recompute_tax": 1,
-		# 		}
-		# 	)
-
-
 
 	tax_details = calculate_taxes(
 		items, shopify_order.get("shipping_lines"), shopify_order.get("tax_lines")
